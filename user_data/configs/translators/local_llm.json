@@ -1,0 +1,11 @@
+{
+  "provider": "Local LM Studio",
+  "endpoint": "http://127.0.0.1:2137/v1",
+  "model": "openai/gpt-oss-20b",
+  "apikey": "",
+  "temperature": 0.3,
+  "top_p": 0.9,
+  "max_tokens": 2048,
+  "retry_attempts": 3,
+  "timeout": 120
+}

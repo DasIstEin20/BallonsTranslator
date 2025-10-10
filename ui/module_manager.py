@@ -4,7 +4,7 @@ import os.path as osp
 
 import numpy as np
 from qtpy.QtCore import QThread, Signal, QObject, QLocale, QTimer
-from qtpy.QtWidgets import QFileDialog
+from qtpy.QtWidgets import QFileDialog, QComboBox, QLineEdit, QPlainTextEdit
 
 from .funcmaps import get_maskseg_method
 from utils.logger import logger as LOGGER
@@ -12,6 +12,7 @@ from utils.registry import Registry
 from utils.imgproc_utils import enlarge_window, get_block_mask
 from utils.io_utils import imread, text_is_empty
 from modules.translators import MissingTranslatorParams
+from modules.translators.trans_llm_api import default_local_llm_params
 from modules.base import BaseModule, soft_empty_cache
 from modules import INPAINTERS, TRANSLATORS, TEXTDETECTORS, OCR, \
     GET_VALID_TRANSLATORS, GET_VALID_TEXTDETECTORS, GET_VALID_INPAINTERS, GET_VALID_OCR, \
@@ -23,6 +24,7 @@ from utils import shared
 from utils.message import create_error_dialog, create_info_dialog
 from .custom_widget import ImgtransProgressMessageBox, ParamComboBox
 from .configpanel import ConfigPanel
+from .module_parse_widgets import ParamWidget
 from utils.proj_imgtrans import ProjImgTrans
 from utils.config import pcfg
 cfg_module = pcfg.module
@@ -536,6 +538,7 @@ class ModuleManager(QObject):
     run_canvas_inpaint = False
     is_waiting_th = False
     block_set_inpainter = False
+    LOCAL_PROVIDER_NAME = "Local LM Studio"
 
     def __init__(self, 
                  imgtrans_proj: ProjImgTrans,
@@ -567,11 +570,12 @@ class ModuleManager(QObject):
         self.imgtrans_thread.finish_blktrans_stage.connect(self.on_finish_blktrans_stage)
         self.imgtrans_thread.finish_blktrans.connect(self.on_finish_blktrans)
 
-        self.translator_panel = translator_panel = config_panel.trans_config_panel        
+        self.translator_panel = translator_panel = config_panel.trans_config_panel
         translator_params = merge_config_module_params(cfg_module.translator_params, GET_VALID_TRANSLATORS(), TRANSLATORS.get)
         translator_panel.addModulesParamWidgets(translator_params)
         translator_panel.translator_changed.connect(self.setTranslator)
         translator_panel.paramwidget_edited.connect(self.on_translatorparam_edited)
+        self.translate_thread.finish_set_module.connect(self._on_translator_loaded)
         from modules.translators.hooks import chs2cht
         BaseTranslator.register_preprocess_hooks({'keyword_sub': translate_preprocess})
         BaseTranslator.register_postprocess_hooks({'chs2cht': chs2cht, 'keyword_sub': translate_postprocess})
@@ -829,9 +833,102 @@ class ModuleManager(QObject):
         self.inpaint(**inpaint_dict)
     
     def on_translatorparam_edited(self, param_key: str, param_content: dict):
+        provider_value = None
+        if param_key == "provider":
+            provider_value = param_content.get("content")
+
         if self.translator is not None:
             self.updateModuleSetupParam(self.translator, param_key, param_content)
+            if provider_value is not None:
+                self._handle_local_provider_selection(str(provider_value))
             cfg_module.translator_params[self.translator.name] = self.translator.params
+        elif provider_value is not None:
+            self._update_local_provider_ui(str(provider_value))
+
+    def _on_translator_loaded(self):
+        translator = self.translator
+        if translator is None:
+            return
+        try:
+            provider_value = translator.provider
+        except Exception:
+            provider_value = None
+        if provider_value is None:
+            return
+        QTimer.singleShot(0, lambda: self._update_local_provider_ui(str(provider_value)))
+
+    def _handle_local_provider_selection(self, provider_value: str):
+        self._update_local_provider_ui(provider_value)
+        if provider_value == self.LOCAL_PROVIDER_NAME and self.translator is not None:
+            self._apply_local_provider_defaults()
+
+    def _update_local_provider_ui(self, provider_value: str):
+        widget = getattr(self.translator_panel, "visibleWidget", None)
+        if not isinstance(widget, ParamWidget):
+            return
+
+        helper_text = self.tr(
+            "LM Studio must be running locally. Default port 2137. No API key required."
+        )
+        helper_label = widget.ensure_helper_label("endpoint", helper_text)
+
+        fields_to_toggle = [
+            "apikey",
+            "multiple_keys",
+            "max requests per minute",
+            "retry attempts",
+            "proxy",
+        ]
+
+        is_local = provider_value == self.LOCAL_PROVIDER_NAME
+        for field_key in fields_to_toggle:
+            widget.set_param_visibility(field_key, not is_local)
+            widget.set_param_enabled(field_key, not is_local)
+
+        if helper_label is not None:
+            helper_label.setVisible(is_local)
+
+    def _apply_local_provider_defaults(self):
+        translator = self.translator
+        widget = getattr(self.translator_panel, "visibleWidget", None)
+        if translator is None or not isinstance(widget, ParamWidget):
+            return
+
+        param_defaults = {
+            "endpoint": default_local_llm_params["endpoint"],
+            "model": default_local_llm_params["model"],
+            "apikey": "",
+            "temperature": default_local_llm_params["temperature"],
+            "top p": default_local_llm_params["top_p"],
+            "max tokens": default_local_llm_params["max_tokens"],
+            "retry attempts": default_local_llm_params["retry_attempts"],
+            "retry timeout": default_local_llm_params["timeout"],
+            "multiple_keys": "",
+        }
+
+        for param_key, value in param_defaults.items():
+            translator.updateParam(param_key, value)
+            field_widget = widget.get_param_widget(param_key)
+            self._set_param_widget_value(field_widget, value)
+
+    def _set_param_widget_value(self, widget, value):
+        if widget is None:
+            return
+
+        block_signals = getattr(widget, "blockSignals", None)
+        if callable(block_signals):
+            block_signals(True)
+
+        try:
+            if isinstance(widget, QPlainTextEdit):
+                widget.setPlainText(str(value))
+            elif isinstance(widget, QComboBox):
+                widget.setCurrentText(str(value))
+            elif isinstance(widget, QLineEdit):
+                widget.setText(str(value))
+        finally:
+            if callable(block_signals):
+                widget.blockSignals(False)
 
     def on_inpainterparam_edited(self, param_key: str, param_content: dict):
         if self.inpainter is not None:
