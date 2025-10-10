@@ -112,6 +112,11 @@ class ProgramConfig(Config):
     let_writing_mode_flag: int = 0
     let_family_flag: int = 0
     let_autolayout_flag: bool = True
+    smart_bubble_split: bool = True
+    auto_format_fit: bool = True
+    fit_tolerance: float = 0.9
+    min_font_size: int = 12
+    max_font_size: int = 28
     let_uppercase_flag: bool = True
     let_show_only_custom_fonts_flag: bool = False
     let_textstyle_indep_flag: bool = False

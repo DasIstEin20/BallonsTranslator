@@ -20,6 +20,7 @@ from modules import INPAINTERS, TRANSLATORS, TEXTDETECTORS, OCR, \
 import modules
 modules.translators.SYSTEM_LANG = QLocale.system().name()
 from utils.textblock import TextBlock, sort_regions
+from utils.translation_enhancements import perform_smart_bubble_split, auto_format_fit_hook
 from utils import shared
 from utils.message import create_error_dialog, create_info_dialog
 from .custom_widget import ImgtransProgressMessageBox, ParamComboBox
@@ -378,16 +379,26 @@ class ImgtransThread(QThread):
                     existed_mask = self.imgtrans_proj.load_mask_by_imgname(imgname)
                     if existed_mask is not None:
                         mask = np.bitwise_or(mask, existed_mask)
+                if pcfg.smart_bubble_split and blk_list:
+                    changed, split_blocks = perform_smart_bubble_split(blk_list, mask=mask)
+                    if changed:
+                        blk_list = split_blocks
+                        LOGGER.debug('[SmartBubbleSplit] %s: %d regions after splitting.', imgname, len(blk_list))
                 self.imgtrans_proj.pages[imgname] = blk_list
 
                 if mask is not None and not cfg_module.enable_ocr:
                     self.imgtrans_proj.save_mask(imgname, mask)
                     need_save_mask = False
-                    
+
                 self.update_detect_progress.emit(self.detect_counter)
 
             if blk_list is None:
                 blk_list = self.imgtrans_proj.pages[imgname] if imgname in self.imgtrans_proj.pages else []
+            elif pcfg.smart_bubble_split and not cfg_module.enable_detect and blk_list:
+                changed, split_blocks = perform_smart_bubble_split(blk_list, mask=mask)
+                if changed:
+                    blk_list = split_blocks
+                    self.imgtrans_proj.pages[imgname] = blk_list
 
             if cfg_module.enable_ocr:
                 try:
@@ -581,6 +592,8 @@ class ModuleManager(QObject):
         from modules.translators.hooks import chs2cht
         BaseTranslator.register_preprocess_hooks({'keyword_sub': translate_preprocess})
         BaseTranslator.register_postprocess_hooks({'chs2cht': chs2cht, 'keyword_sub': translate_postprocess})
+        if 'auto_format_fit' not in BaseTranslator._postprocess_hooks:
+            BaseTranslator.register_postprocess_hooks({'auto_format_fit': auto_format_fit_hook})
 
         self.inpaint_panel = inpainter_panel = config_panel.inpaint_config_panel
         inpainter_params = merge_config_module_params(cfg_module.inpainter_params, GET_VALID_INPAINTERS(), INPAINTERS.get)

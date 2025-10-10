@@ -455,15 +455,15 @@ class TranslatorConfigPanel(ModuleConfigParseWidget):
         self.vlayout.addWidget(self.replacePreMTkeywordBtn)
         self.vlayout.addWidget(self.replaceMTkeywordBtn)
 
-        summary_label = ParamNameLabel(self.tr('Previous Chapter Summary'))
+        summary_label = ParamNameLabel(self.tr('Summary & Extras'))
         summary_label.setToolTip(
-            self.tr('Provide context from the previous chapter to guide translations.'))
+            self.tr('Provide context or notes to guide translations.'))
         self.prev_summary_editor = QPlainTextEdit(self)
         self.prev_summary_editor.setObjectName('prev_summary_editor')
         self.prev_summary_editor.setFixedWidth(CONFIG_COMBOBOX_LONG)
         self.prev_summary_editor.setFixedHeight(120)
         self.prev_summary_editor.setPlaceholderText(
-            self.tr('Summarize the previous chapter to improve translation consistency.'))
+            self.tr('Add summaries, cast notes, or other context to improve translation consistency.'))
         self.prev_summary_editor.textChanged.connect(self._on_prev_summary_changed)
         self.vlayout.addWidget(summary_label)
         self.vlayout.addWidget(self.prev_summary_editor)

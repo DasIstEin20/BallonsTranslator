@@ -228,28 +228,11 @@ def main():
         shared.SCREEN_H = ps.geometry().height()
 
     lang = config.display_lang
-    shared.FALLBACK_LANGUAGE = None
     translator_dir = osp.dirname(osp.abspath(__file__)) + "/translate"
     lang_qm_path = osp.join(shared.TRANSLATE_DIR, lang + '.qm')
-    lang_ts_path = osp.join(shared.TRANSLATE_DIR, lang + '.ts')
-    needs_polish_fallback = lang in ('pl_PL', 'pl', 'Polski')
 
     translator_loaded = False
-    if needs_polish_fallback and (not osp.exists(lang_qm_path) or not osp.exists(lang_ts_path)):
-        fallback_lang = 'en_US'
-        fallback_path = osp.join(shared.TRANSLATE_DIR, fallback_lang + '.qm')
-        LOGGER.warning(
-            f'Polish translation resources missing ({lang_qm_path} or {lang_ts_path}). '
-            f'Falling back to {fallback_lang}.')
-        if osp.exists(fallback_path):
-            translator = QTranslator()
-            translator.load(fallback_lang, translator_dir)
-            app.installTranslator(translator)
-            translator_loaded = True
-        else:
-            LOGGER.warning(f'Fallback translation file {fallback_path} not found. Using default UI strings.')
-        shared.FALLBACK_LANGUAGE = 'pl_PL'
-    elif osp.exists(lang_qm_path):
+    if osp.exists(lang_qm_path):
         translator = QTranslator()
         translator.load(lang, translator_dir)
         app.installTranslator(translator)

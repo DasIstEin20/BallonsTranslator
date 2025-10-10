@@ -2,12 +2,12 @@ from typing import List, Union, Tuple
 
 from qtpy.QtWidgets import QPushButton, QKeySequenceEdit, QLayout, QGridLayout, QHBoxLayout, QVBoxLayout, QTreeView, QWidget, QLabel, QSizePolicy, QSpacerItem, QCheckBox, QSplitter, QScrollArea, QLineEdit
 from qtpy.QtCore import Qt, Signal, QSize, QEvent, QItemSelection
-from qtpy.QtGui import QStandardItem, QStandardItemModel, QMouseEvent, QFont, QIntValidator, QValidator, QFocusEvent
+from qtpy.QtGui import QStandardItem, QStandardItemModel, QMouseEvent, QFont, QIntValidator, QValidator, QFocusEvent, QDoubleValidator
 
 from .custom_widget import ConfigComboBox, Widget
 from utils.config import pcfg
 from utils import shared as C
-from utils.shared import CONFIG_FONTSIZE_CONTENT, CONFIG_FONTSIZE_HEADER, CONFIG_FONTSIZE_TABLE, CONFIG_COMBOBOX_SHORT, CONFIG_COMBOBOX_LONG, CONFIG_COMBOBOX_MIDEAN, apply_language_fallback
+from utils.shared import CONFIG_FONTSIZE_CONTENT, CONFIG_FONTSIZE_HEADER, CONFIG_FONTSIZE_TABLE, CONFIG_COMBOBOX_SHORT, CONFIG_COMBOBOX_LONG, CONFIG_COMBOBOX_MIDEAN
 from .module_parse_widgets import InpaintConfigPanel, TextDetectConfigPanel, TranslatorConfigPanel, OCRConfigPanel
 
 class CustomIntValidator(QIntValidator):
@@ -351,10 +351,10 @@ class ConfigPanel(Widget):
         dlConfigPanel, dltableitem = self.addConfigBlock(self.tr('DL Module'))
         generalConfigPanel, generalTableItem = self.addConfigBlock(self.tr('General'))
         
-        label_text_det = apply_language_fallback('Text Detection', self.tr('Text Detection'))
-        label_text_ocr = apply_language_fallback('OCR', self.tr('OCR'))
-        label_inpaint = apply_language_fallback('Inpaint', self.tr('Inpaint'))
-        label_translator = apply_language_fallback('Translator', self.tr('Translator'))
+        label_text_det = self.tr('Text Detection')
+        label_text_ocr = self.tr('OCR')
+        label_inpaint = self.tr('Inpaint')
+        label_translator = self.tr('Translator')
         label_startup = self.tr('Startup')
         label_typesetting = self.tr('Typesetting')
         label_save = self.tr('Save')
@@ -462,6 +462,43 @@ class ConfigPanel(Widget):
         self.let_show_only_custom_fonts, sublock = generalConfigPanel.addCheckBox(self.tr("Show only custom fonts"))
         self.let_show_only_custom_fonts.stateChanged.connect(self.on_show_only_custom_fonts)
 
+        self.smart_split_checker, _ = generalConfigPanel.addCheckBox(
+            self.tr('Smart bubble split'),
+            discription=self.tr('Automatically segment multi-column balloons before OCR and translation.'))
+        self.smart_split_checker.stateChanged.connect(self.on_smart_split_changed)
+
+        self.auto_format_checker, _ = generalConfigPanel.addCheckBox(
+            self.tr('Auto format fit'),
+            discription=self.tr('Resize, wrap, and shrink translations so they fit inside detected bubbles.'))
+        self.auto_format_checker.stateChanged.connect(self.on_auto_format_changed)
+
+        self.fit_tolerance_edit = QLineEdit(self)
+        self.fit_tolerance_edit.setValidator(QDoubleValidator(0.1, 1.0, 2, self.fit_tolerance_edit))
+        self.fit_tolerance_edit.setFixedWidth(CONFIG_COMBOBOX_SHORT)
+        self.fit_tolerance_edit.editingFinished.connect(self.on_fit_tolerance_changed)
+        tol_block = ConfigSubBlock(self.fit_tolerance_edit, self.tr('Fit tolerance'), vertical_layout=False)
+        tol_block.layout().setAlignment(Qt.AlignmentFlag.AlignLeft)
+        tol_block.layout().insertStretch(-1)
+        generalConfigPanel.addSublock(tol_block)
+
+        self.min_font_size_edit = QLineEdit(self)
+        self.min_font_size_edit.setValidator(QIntValidator(6, 200, self.min_font_size_edit))
+        self.min_font_size_edit.setFixedWidth(CONFIG_COMBOBOX_SHORT)
+        self.min_font_size_edit.editingFinished.connect(self.on_min_font_size_changed)
+        min_block = ConfigSubBlock(self.min_font_size_edit, self.tr('Min font size'), vertical_layout=False)
+        min_block.layout().setAlignment(Qt.AlignmentFlag.AlignLeft)
+        min_block.layout().insertStretch(-1)
+        generalConfigPanel.addSublock(min_block)
+
+        self.max_font_size_edit = QLineEdit(self)
+        self.max_font_size_edit.setValidator(QIntValidator(6, 400, self.max_font_size_edit))
+        self.max_font_size_edit.setFixedWidth(CONFIG_COMBOBOX_SHORT)
+        self.max_font_size_edit.editingFinished.connect(self.on_max_font_size_changed)
+        max_block = ConfigSubBlock(self.max_font_size_edit, self.tr('Max font size'), vertical_layout=False)
+        max_block.layout().setAlignment(Qt.AlignmentFlag.AlignLeft)
+        max_block.layout().insertStretch(-1)
+        generalConfigPanel.addSublock(max_block)
+
         generalConfigPanel.addTextLabel(label_save)
         self.rst_imgformat_combobox, imsave_sublock = generalConfigPanel.addCombobox(['PNG', 'JPG', 'WEBP', 'JXL'], self.tr('Result image format'))
         self.rst_imgformat_combobox.activated.connect(self.on_rst_imgformat_changed)
@@ -508,6 +545,7 @@ class ConfigPanel(Widget):
         hlayout.setSpacing(0)
         hlayout.setContentsMargins(0, 0, 0, 0)
 
+        self._update_auto_format_fields()
         self.configTable.expandAll()
 
     def on_load_model_changed(self):
@@ -596,6 +634,52 @@ class ConfigPanel(Widget):
         pcfg.let_show_only_custom_fonts_flag = self.let_show_only_custom_fonts.isChecked()
         self.show_only_custom_font.emit(pcfg.let_show_only_custom_fonts_flag)
 
+    def on_smart_split_changed(self):
+        pcfg.smart_bubble_split = self.smart_split_checker.isChecked()
+
+    def on_auto_format_changed(self):
+        pcfg.auto_format_fit = self.auto_format_checker.isChecked()
+        self._update_auto_format_fields()
+
+    def on_fit_tolerance_changed(self):
+        text = self.fit_tolerance_edit.text().strip()
+        if not text:
+            value = pcfg.fit_tolerance
+        else:
+            try:
+                value = float(text)
+            except ValueError:
+                value = pcfg.fit_tolerance
+        value = max(0.1, min(value, 1.0))
+        pcfg.fit_tolerance = value
+        self.fit_tolerance_edit.setText(f'{value:.2f}')
+
+    def on_min_font_size_changed(self):
+        text = self.min_font_size_edit.text().strip()
+        if not text:
+            value = pcfg.min_font_size
+        else:
+            value = max(6, int(text))
+        pcfg.min_font_size = value
+        if pcfg.max_font_size < value:
+            pcfg.max_font_size = value
+            self.max_font_size_edit.setText(str(value))
+        self.min_font_size_edit.setText(str(value))
+
+    def on_max_font_size_changed(self):
+        text = self.max_font_size_edit.text().strip()
+        if not text:
+            value = pcfg.max_font_size
+        else:
+            value = max(pcfg.min_font_size, int(text))
+        pcfg.max_font_size = value
+        self.max_font_size_edit.setText(str(value))
+
+    def _update_auto_format_fields(self):
+        enabled = self.auto_format_checker.isChecked()
+        for widget in (self.fit_tolerance_edit, self.min_font_size_edit, self.max_font_size_edit):
+            widget.setEnabled(enabled)
+
     def focusOnTranslator(self):
         idx0, idx1 = self.trans_sub_block.idx0, self.trans_sub_block.idx1
         self.configTable.setCurrentItem(idx0, idx1)
@@ -648,5 +732,11 @@ class ConfigPanel(Widget):
         self.load_model_checker.setChecked(pcfg.module.load_model_on_demand)
         self.empty_runcache_checker.setChecked(pcfg.module.empty_runcache)
         self.let_show_only_custom_fonts.setChecked(pcfg.let_show_only_custom_fonts_flag)
+        self.smart_split_checker.setChecked(pcfg.smart_bubble_split)
+        self.auto_format_checker.setChecked(pcfg.auto_format_fit)
+        self.fit_tolerance_edit.setText(f'{pcfg.fit_tolerance:.2f}')
+        self.min_font_size_edit.setText(str(pcfg.min_font_size))
+        self.max_font_size_edit.setText(str(pcfg.max_font_size))
+        self._update_auto_format_fields()
 
         self.blockSignals(False)
