@@ -131,6 +131,7 @@ class ProgramConfig(Config):
     show_trans_text: bool = True
     saladict_shortcut: str = "Alt+S"
     search_url: str = "https://www.google.com/search?q="
+    prev_summary: str = ''
     ocr_sublist: List = field(default_factory=lambda: list())
     restore_ocr_empty: bool = False
     pre_mt_sublist: List = field(default_factory=lambda: list())

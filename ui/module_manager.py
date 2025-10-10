@@ -575,6 +575,8 @@ class ModuleManager(QObject):
         translator_panel.addModulesParamWidgets(translator_params)
         translator_panel.translator_changed.connect(self.setTranslator)
         translator_panel.paramwidget_edited.connect(self.on_translatorparam_edited)
+        translator_panel.prev_summary_changed.connect(self._on_prev_summary_changed)
+        translator_panel.set_prev_summary_text(getattr(pcfg, 'prev_summary', ''))
         self.translate_thread.finish_set_module.connect(self._on_translator_loaded)
         from modules.translators.hooks import chs2cht
         BaseTranslator.register_preprocess_hooks({'keyword_sub': translate_preprocess})
@@ -844,6 +846,9 @@ class ModuleManager(QObject):
             cfg_module.translator_params[self.translator.name] = self.translator.params
         elif provider_value is not None:
             self._update_local_provider_ui(str(provider_value))
+
+    def _on_prev_summary_changed(self, summary: str):
+        pcfg.prev_summary = summary
 
     def _on_translator_loaded(self):
         translator = self.translator

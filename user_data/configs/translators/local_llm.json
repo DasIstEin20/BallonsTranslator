@@ -1,6 +1,6 @@
 {
   "provider": "Local LM Studio",
-  "endpoint": "http://127.0.0.1:2137/v1",
+  "endpoint": "http://127.0.0.1:2137/v1/chat/completions",
   "model": "openai/gpt-oss-20b",
   "apikey": "",
   "temperature": 0.3,

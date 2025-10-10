@@ -7,7 +7,7 @@ from qtpy.QtGui import QStandardItem, QStandardItemModel, QMouseEvent, QFont, QI
 from .custom_widget import ConfigComboBox, Widget
 from utils.config import pcfg
 from utils import shared as C
-from utils.shared import CONFIG_FONTSIZE_CONTENT, CONFIG_FONTSIZE_HEADER, CONFIG_FONTSIZE_TABLE, CONFIG_COMBOBOX_SHORT, CONFIG_COMBOBOX_LONG, CONFIG_COMBOBOX_MIDEAN
+from utils.shared import CONFIG_FONTSIZE_CONTENT, CONFIG_FONTSIZE_HEADER, CONFIG_FONTSIZE_TABLE, CONFIG_COMBOBOX_SHORT, CONFIG_COMBOBOX_LONG, CONFIG_COMBOBOX_MIDEAN, apply_language_fallback
 from .module_parse_widgets import InpaintConfigPanel, TextDetectConfigPanel, TranslatorConfigPanel, OCRConfigPanel
 
 class CustomIntValidator(QIntValidator):
@@ -351,10 +351,10 @@ class ConfigPanel(Widget):
         dlConfigPanel, dltableitem = self.addConfigBlock(self.tr('DL Module'))
         generalConfigPanel, generalTableItem = self.addConfigBlock(self.tr('General'))
         
-        label_text_det = self.tr('Text Detection')
-        label_text_ocr = self.tr('OCR')
-        label_inpaint = self.tr('Inpaint')
-        label_translator = self.tr('Translator')
+        label_text_det = apply_language_fallback('Text Detection', self.tr('Text Detection'))
+        label_text_ocr = apply_language_fallback('OCR', self.tr('OCR'))
+        label_inpaint = apply_language_fallback('Inpaint', self.tr('Inpaint'))
+        label_translator = apply_language_fallback('Translator', self.tr('Translator'))
         label_startup = self.tr('Startup')
         label_typesetting = self.tr('Typesetting')
         label_save = self.tr('Save')

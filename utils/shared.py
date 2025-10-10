@@ -86,6 +86,27 @@ DISPLAY_LANGUAGE_MAP = {
 }
 VALID_LANG_SET = set(list(DISPLAY_LANGUAGE_MAP.values()))
 
+FALLBACK_LANGUAGE = None
+LANGUAGE_FALLBACK_TRANSLATIONS = {
+    "pl_PL": {
+        "Translator": "Tłumacz",
+        "Text Detection": "Wykrywanie tekstu",
+        "OCR": "OCR",
+        "Inpaint": "Retusz",
+        "Inpainting: ": "Retuszowanie: ",
+        "Translating: ": "Tłumaczenie: ",
+    }
+}
+
+
+def apply_language_fallback(source_text: str, translated_text: str) -> str:
+    fallback_lang = FALLBACK_LANGUAGE
+    if fallback_lang:
+        translations = LANGUAGE_FALLBACK_TRANSLATIONS.get(fallback_lang, {})
+        if source_text in translations:
+            return translations[source_text]
+    return translated_text
+
 for p in os.listdir(TRANSLATE_DIR):
     if p.endswith('.qm'):
         lang = p.replace('.qm', '')

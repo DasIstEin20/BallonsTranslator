@@ -424,6 +424,7 @@ class TranslatorConfigPanel(ModuleConfigParseWidget):
     show_pre_MT_keyword_window = Signal()
     show_MT_keyword_window = Signal()
     show_OCR_keyword_window = Signal()
+    prev_summary_changed = Signal(str)
 
     def __init__(self, module_name, scrollWidget: QWidget = None, *args, **kwargs) -> None:
         super().__init__(module_name, GET_VALID_TRANSLATORS, scrollWidget=scrollWidget, *args, **kwargs)
@@ -453,6 +454,27 @@ class TranslatorConfigPanel(ModuleConfigParseWidget):
         self.vlayout.addWidget(self.replaceOCRkeywordBtn)
         self.vlayout.addWidget(self.replacePreMTkeywordBtn)
         self.vlayout.addWidget(self.replaceMTkeywordBtn)
+
+        summary_label = ParamNameLabel(self.tr('Previous Chapter Summary'))
+        summary_label.setToolTip(
+            self.tr('Provide context from the previous chapter to guide translations.'))
+        self.prev_summary_editor = QPlainTextEdit(self)
+        self.prev_summary_editor.setObjectName('prev_summary_editor')
+        self.prev_summary_editor.setFixedWidth(CONFIG_COMBOBOX_LONG)
+        self.prev_summary_editor.setFixedHeight(120)
+        self.prev_summary_editor.setPlaceholderText(
+            self.tr('Summarize the previous chapter to improve translation consistency.'))
+        self.prev_summary_editor.textChanged.connect(self._on_prev_summary_changed)
+        self.vlayout.addWidget(summary_label)
+        self.vlayout.addWidget(self.prev_summary_editor)
+
+    def set_prev_summary_text(self, summary: str):
+        self.prev_summary_editor.blockSignals(True)
+        self.prev_summary_editor.setPlainText(summary or '')
+        self.prev_summary_editor.blockSignals(False)
+
+    def _on_prev_summary_changed(self):
+        self.prev_summary_changed.emit(self.prev_summary_editor.toPlainText())
 
     def finishSetTranslator(self, translator: BaseTranslator):
         self.source_combobox.blockSignals(True)

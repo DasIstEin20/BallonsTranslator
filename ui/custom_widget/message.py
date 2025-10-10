@@ -6,7 +6,7 @@ from qtpy.QtWidgets import QDialog, QLabel, QHBoxLayout, QVBoxLayout, QMessageBo
 from qtpy.QtGui import  QCloseEvent, QShowEvent
 from qtpy.QtCore import Qt, Signal
 
-from utils.shared import remove_from_runtime_widget_set, add_to_runtime_widget_set
+from utils.shared import remove_from_runtime_widget_set, add_to_runtime_widget_set, apply_language_fallback
 from .widget import Widget
 
 
@@ -159,8 +159,10 @@ class ImgtransProgressMessageBox(ProgressMessageBox):
         
         self.detect_bar = TaskProgressBar(self.tr('Detecting: '), True, self)
         self.ocr_bar = TaskProgressBar(self.tr('OCR: '), True, self)
-        self.inpaint_bar = TaskProgressBar(self.tr('Inpainting: '), True, self)
-        self.translate_bar = TaskProgressBar(self.tr('Translating: '), True, self)
+        inpainting_label = apply_language_fallback('Inpainting: ', self.tr('Inpainting: '))
+        translating_label = apply_language_fallback('Translating: ', self.tr('Translating: '))
+        self.inpaint_bar = TaskProgressBar(inpainting_label, True, self)
+        self.translate_bar = TaskProgressBar(translating_label, True, self)
 
         layout = self.layout()
         layout.addWidget(self.detect_bar)
