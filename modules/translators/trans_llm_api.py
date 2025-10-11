@@ -1,12 +1,19 @@
+import os
 import re
 import time
 import json
 import traceback
-from typing import List, Dict, Optional, Type
+import os.path as osp
+from copy import deepcopy
+from typing import List, Dict, Optional, Tuple
 
 import httpx
 import openai
 from pydantic import BaseModel, Field, ValidationError
+
+from utils import shared
+from utils.config import pcfg
+from utils.logger import logger as LOGGER
 
 from .base import BaseTranslator, register_translator
 
@@ -37,7 +44,14 @@ class LLM_API_Translator(BaseTranslator):
     params: Dict = {
         "provider": {
             "type": "selector",
-            "options": ["OpenAI", "Google", "Grok", "OpenRouter", "LLM Studio"],
+            "options": [
+                "OpenAI",
+                "Google",
+                "Grok",
+                "OpenRouter",
+                "LLM Studio",
+                "Local LM Studio",
+            ],
             "value": "OpenAI",
             "description": "Select the LLM provider.",
         },
@@ -66,6 +80,7 @@ class LLM_API_Translator(BaseTranslator):
             ],
             "value": "OAI: gpt-4o",
             "description": "Select a model that supports JSON Mode for structured output.",
+            "editable": True,
         },
         "override model": {
             "value": "",
@@ -158,6 +173,29 @@ class LLM_API_Translator(BaseTranslator):
         self.key_usage = {}
         self.client = None
 
+    LOCAL_PROVIDER = "Local LM Studio"
+
+    @staticmethod
+    def _normalize_endpoint(endpoint: Optional[str]) -> Optional[str]:
+        if endpoint is None:
+            return None
+        normalized = endpoint.strip()
+        if not normalized:
+            return None
+        normalized = re.sub(r"/+$", "", normalized)
+        return normalized
+
+    def _debug(self, message: str):
+        self.logger.debug(message)
+
+    def _requires_api_key(self) -> bool:
+        return self.provider not in {"LLM Studio", self.LOCAL_PROVIDER}
+
+    def _get_auth_key(self) -> str:
+        if self.provider in {"LLM Studio", self.LOCAL_PROVIDER}:
+            return "lm-studio"
+        return self.apikey
+
     def _initialize_client(self, api_key_to_use: str) -> bool:
         endpoint = self.endpoint
         provider = self.provider
@@ -170,6 +208,10 @@ class LLM_API_Translator(BaseTranslator):
                 endpoint = "https://openrouter.ai/api/v1"
             elif provider == "Grok":
                 endpoint = "https://api.x.ai/v1"
+            elif provider == self.LOCAL_PROVIDER:
+                endpoint = "http://127.0.0.1:2137/v1"
+
+        endpoint = self._normalize_endpoint(endpoint) or endpoint
 
         proxy = self.proxy
         http_client = None
@@ -193,7 +235,7 @@ class LLM_API_Translator(BaseTranslator):
             if len(api_key_to_use) > 8
             else api_key_to_use
         )
-        self.logger.debug(
+        self._debug(
             f"Initializing client for {provider} with key {masked_key} at endpoint {endpoint}"
         )
 
@@ -267,6 +309,13 @@ class LLM_API_Translator(BaseTranslator):
     def system_prompt(self) -> str:
         return self.get_param_value("system_prompt")
 
+    def _compose_system_prompt(self) -> str:
+        base_prompt = self.system_prompt or ""
+        summary_text = getattr(pcfg, "prev_summary", "")
+        if summary_text:
+            return f"{summary_text}\n\n{base_prompt}" if base_prompt else summary_text
+        return base_prompt
+
     @property
     def invalid_repeat_count(self) -> int:
         return int(self.get_param_value("invalid repeat count"))
@@ -325,7 +374,7 @@ class LLM_API_Translator(BaseTranslator):
         if time_since_last_request < delay:
             sleep_time = delay - time_since_last_request
             if hasattr(self, "debug_mode") and self.debug_mode:
-                self.logger.debug(f"Global delay: Waiting {sleep_time:.3f} seconds.")
+                self._debug(f"Global delay: Waiting {sleep_time:.3f} seconds.")
             time.sleep(sleep_time)
 
         self.last_request_time = time.time()
@@ -384,10 +433,12 @@ class LLM_API_Translator(BaseTranslator):
 
     def _request_translation(self, prompt: str) -> Optional[TranslationResponse]:
         current_api_key = "lm-studio"
-        if self.provider != "LLM Studio":
+        if self._requires_api_key():
             current_api_key = self._select_api_key()
             if not current_api_key:
                 raise ConnectionError("No available API key found.")
+        else:
+            current_api_key = self._get_auth_key()
 
         if self.provider == "LLM Studio" and not self.endpoint:
             raise ValueError(
@@ -403,8 +454,9 @@ class LLM_API_Translator(BaseTranslator):
         if ": " in model_name:
             model_name = model_name.split(": ", 1)[1]
 
+        composed_system_prompt = self._compose_system_prompt()
         messages = [
-            {"role": "system", "content": self.system_prompt},
+            {"role": "system", "content": composed_system_prompt},
             {"role": "user", "content": prompt},
         ]
 
@@ -416,25 +468,73 @@ class LLM_API_Translator(BaseTranslator):
             "max_tokens": self.max_tokens,
         }
 
-        if self.provider == "LLM Studio":
-            self.logger.debug("Using 'json_schema' mode for LLM Studio.")
+        if self.provider == self.LOCAL_PROVIDER:
+            self._debug("Using 'text' response_format for Local LM Studio.")
+            api_args["response_format"] = {"type": "text"}
+        elif self.provider == "LLM Studio":
+            self._debug("Using 'json_schema' mode for LLM Studio.")
             api_args["response_format"] = {
                 "type": "json_schema",
                 "json_schema": {"schema": TranslationResponse.model_json_schema()},
             }
         elif self.provider in ["OpenAI", "Grok", "Google", "OpenRouter"]:
-            self.logger.debug(f"Using 'json_object' mode for {self.provider}.")
+            self._debug(f"Using 'json_object' mode for {self.provider}.")
             api_args["response_format"] = {"type": "json_object"}
 
         if self.provider == "OpenAI":
             api_args["frequency_penalty"] = self.frequency_penalty
             api_args["presence_penalty"] = self.presence_penalty
 
-        try:
-            completion = self.client.chat.completions.create(**api_args)
-        except Exception as e:
-            self.logger.error(f"API request failed: {e}")
-            raise
+        if self.provider == self.LOCAL_PROVIDER:
+            request_endpoint = None
+            if hasattr(self, "_get_request_endpoint"):
+                request_endpoint = self._get_request_endpoint()
+            if request_endpoint:
+                self._debug(f"Request endpoint: {request_endpoint}")
+            try:
+                serialized_args = json.dumps(api_args, ensure_ascii=False)
+            except TypeError:
+                serialized_args = str(api_args)
+            self._debug(f"Request payload: {serialized_args}")
+
+        completion = None
+        max_attempts = self.retry_attempts if self.provider == self.LOCAL_PROVIDER else 1
+        last_exception = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                completion = self.client.chat.completions.create(**api_args)
+                break
+            except Exception as e:
+                last_exception = e
+                if self.provider == self.LOCAL_PROVIDER and attempt < max_attempts:
+                    self._debug(
+                        f"Request attempt {attempt} failed: {e}. Retrying in {self.retry_timeout} seconds.")
+                    time.sleep(self.retry_timeout)
+                    continue
+                self.logger.error(f"API request failed: {e}")
+                raise
+
+        if completion is None and last_exception is not None:
+            raise last_exception
+
+        if self.provider == self.LOCAL_PROVIDER:
+            response_payload = None
+            if hasattr(completion, "model_dump_json"):
+                try:
+                    response_payload = completion.model_dump_json(indent=2, ensure_ascii=False)
+                except TypeError:
+                    response_payload = completion.model_dump_json(indent=2)
+            elif hasattr(completion, "model_dump"):
+                try:
+                    response_payload = json.dumps(completion.model_dump(), indent=2, ensure_ascii=False)
+                except TypeError:
+                    try:
+                        response_payload = json.dumps(completion.model_dump(), indent=2)
+                    except TypeError:
+                        response_payload = repr(completion.model_dump())
+            if response_payload is None:
+                response_payload = repr(completion)
+            self._debug(f"Response payload: {response_payload}")
 
         if (
             completion.choices
@@ -448,7 +548,7 @@ class LLM_API_Translator(BaseTranslator):
                 r"```(?:json)?\s*(\{.*?\})\s*```", json_to_parse, re.DOTALL
             )
             if match:
-                self.logger.debug(
+                self._debug(
                     "Markdown code block detected. Extracting JSON content."
                 )
                 json_to_parse = match.group(1)
@@ -482,7 +582,7 @@ class LLM_API_Translator(BaseTranslator):
 
                     if fixed_translations:
                         fixed_data = {"translations": fixed_translations}
-                        self.logger.debug(
+                        self._debug(
                             f"Transformed simple response to: {fixed_data}"
                         )
                         validated_response = TranslationResponse.model_validate(
@@ -497,7 +597,7 @@ class LLM_API_Translator(BaseTranslator):
                     self.logger.error(
                         f"Pydantic validation or JSON parsing failed even after attempting fix: {final_e}"
                     )
-                    self.logger.debug(f"Raw JSON content from API: {raw_content}")
+                    self._debug(f"Raw JSON content from API: {raw_content}")
                     raise
         else:
             self.logger.warning("No valid message content in API response.")
@@ -595,7 +695,7 @@ class LLM_API_Translator(BaseTranslator):
                     self.logger.error(
                         f"Fatal Error: An unrecoverable error occurred: {type(e).__name__} - {e}"
                     )
-                    self.logger.debug(traceback.format_exc())
+                    self._debug(traceback.format_exc())
                     translations.extend([f"[ERROR: {type(e).__name__}]"] * num_src)
                     break
 
@@ -606,3 +706,160 @@ class LLM_API_Translator(BaseTranslator):
 
         if param_key in ["proxy", "multiple_keys", "apikey", "provider", "endpoint"]:
             self.client = None
+
+
+LOCAL_LLM_CONFIG_PATH = osp.join(
+    shared.PROGRAM_PATH, "user_data", "configs", "translators", "local_llm.json"
+)
+
+default_local_llm_params = {
+    "provider": "Local LM Studio",
+    "endpoint": "http://127.0.0.1:2137/v1/chat/completions",
+    "model": "openai/gpt-oss-20b",
+    "apikey": "",
+    "temperature": 0.3,
+    "top_p": 0.9,
+    "max_tokens": 2048,
+    "retry_attempts": 3,
+    "timeout": 120,
+}
+
+
+def _ensure_local_llm_default_config():
+    try:
+        config_dir = osp.dirname(LOCAL_LLM_CONFIG_PATH)
+        os.makedirs(config_dir, exist_ok=True)
+        if not osp.exists(LOCAL_LLM_CONFIG_PATH):
+            with open(LOCAL_LLM_CONFIG_PATH, "w", encoding="utf8") as file:
+                json.dump(default_local_llm_params, file, indent=2)
+    except Exception as exc:
+        LOGGER.warning(f"Failed to initialize Local LM Studio config file: {exc}")
+
+
+_ensure_local_llm_default_config()
+
+
+@register_translator("Local LM Studio")
+class LocalLLMTranslator(LLM_API_Translator):
+    DEFAULT_ENDPOINT = default_local_llm_params["endpoint"]
+    ENDPOINT_SUFFIX = "/chat/completions"
+
+    params = deepcopy(LLM_API_Translator.params)
+    params["provider"]["value"] = default_local_llm_params["provider"]
+    params["endpoint"]["value"] = DEFAULT_ENDPOINT
+    params["model"]["value"] = default_local_llm_params["model"]
+    params["temperature"]["value"] = default_local_llm_params["temperature"]
+    params["top p"]["value"] = default_local_llm_params["top_p"]
+    params["max tokens"]["value"] = default_local_llm_params["max_tokens"]
+    params["retry attempts"]["value"] = default_local_llm_params["retry_attempts"]
+    params["retry timeout"]["value"] = default_local_llm_params["timeout"]
+    params["apikey"]["value"] = ""
+    params["multiple_keys"]["value"] = ""
+
+    def __init__(self, *args, **kwargs):
+        self._endpoint_checked = False
+        self._endpoint_warning_logged = False
+        super().__init__(*args, **kwargs)
+
+    def _setup_translator(self):
+        super()._setup_translator()
+        self._endpoint_checked = False
+        self._endpoint_warning_logged = False
+        self._validate_endpoint()
+
+    def _debug(self, message: str):
+        self.logger.debug(f"[Local LM Studio] {message}")
+
+    def _requires_api_key(self) -> bool:
+        return False
+
+    def _get_auth_key(self) -> str:
+        return "lm-studio"
+
+    @property
+    def endpoint(self) -> Optional[str]:
+        base_url, _ = self._resolve_endpoint_pair()
+        return base_url or None
+
+    def _get_request_endpoint(self) -> str:
+        _, request_url = self._resolve_endpoint_pair()
+        return request_url or ""
+
+    def _resolve_endpoint_pair(self, endpoint_value: Optional[str] = None) -> Tuple[str, str]:
+        suffix = self.ENDPOINT_SUFFIX
+        if endpoint_value is None:
+            endpoint_value = self.get_param_value("endpoint")
+
+        normalized_input = self._normalize_endpoint(endpoint_value)
+        default_normalized = self._normalize_endpoint(self.DEFAULT_ENDPOINT)
+        default_base = (
+            default_normalized[:-len(suffix)]
+            if default_normalized and default_normalized.endswith(suffix)
+            else default_normalized
+        )
+
+        effective = normalized_input or default_normalized or ""
+        if effective.endswith(suffix):
+            base_candidate = effective[:-len(suffix)]
+            request_candidate = effective
+        else:
+            base_candidate = effective
+            trimmed = effective.rstrip("/")
+            request_candidate = trimmed + suffix if trimmed else default_normalized or ""
+
+        if not base_candidate:
+            base_candidate = default_base or default_normalized or ""
+        if not request_candidate:
+            if base_candidate:
+                request_candidate = base_candidate.rstrip("/") + suffix
+            else:
+                request_candidate = default_normalized or ""
+
+        base_candidate = base_candidate or ""
+        request_candidate = request_candidate or ""
+
+        return base_candidate, request_candidate
+
+    def updateParam(self, param_key: str, param_content):
+        if param_key == "endpoint":
+            normalized = self._normalize_endpoint(param_content)
+            if not normalized:
+                normalized = self.DEFAULT_ENDPOINT
+            super().updateParam(param_key, normalized)
+            self._endpoint_checked = False
+            self._endpoint_warning_logged = False
+            self._validate_endpoint()
+            return
+
+        super().updateParam(param_key, param_content)
+
+        if param_key == "provider":
+            self._endpoint_checked = False
+            self._endpoint_warning_logged = False
+            self._validate_endpoint()
+
+    def _validate_endpoint(self):
+        if getattr(self, "_endpoint_checked", False):
+            return
+
+        base_url, request_url = self._resolve_endpoint_pair()
+        validation_url = base_url or request_url or self.DEFAULT_ENDPOINT
+        try:
+            response = httpx.get(validation_url, timeout=5.0)
+            if response.status_code == 200:
+                self._debug(
+                    f"Endpoint reachable at {validation_url} (status {response.status_code}).")
+            else:
+                self._log_connection_warning()
+        except Exception:
+            self._log_connection_warning()
+        finally:
+            self._endpoint_checked = True
+
+    def _log_connection_warning(self):
+        if getattr(self, "_endpoint_warning_logged", False):
+            return
+        self.logger.warning(
+            "[Local LM Studio] Connection failed. Check if LM Studio is running on port 2137."
+        )
+        self._endpoint_warning_logged = True

@@ -146,6 +146,11 @@ class ParamWidget(QWidget):
         if 'description' in params:
             self.setToolTip(params['description'])
 
+        self.param_widget_map = {}
+        self.param_label_map = {}
+        self.param_container_map = {}
+        self.param_helper_label_map = {}
+
         for ii, param_key in enumerate(params):
             if param_key == 'description' or param_key.startswith('__'):
                 continue
@@ -230,6 +235,9 @@ class ParamWidget(QWidget):
                 param_label = ParamNameLabel(display_param_name)
                 param_layout.addWidget(param_label, ii, 0)
                 widget_idx = 1
+                self.param_label_map[param_key] = param_label
+            else:
+                self.param_label_map[param_key] = None
             if param_widget is not None:
                 pw_lo = None
                 if hasattr(param_widget, 'flush_btn') or hasattr(param_widget, 'path_select_btn'):
@@ -241,14 +249,21 @@ class ParamWidget(QWidget):
                 if hasattr(param_widget, 'path_select_btn'):
                     pw_lo.addWidget(param_widget.path_select_btn)
                     param_widget.pathbtn_clicked.connect(self.on_pathbtn_clicked)
+                container_widget = QWidget()
+                container_layout = QVBoxLayout(container_widget)
+                container_layout.setContentsMargins(0, 0, 0, 0)
+                container_layout.setSpacing(3)
                 if pw_lo is None:
-                    param_layout.addWidget(param_widget, ii, widget_idx)
+                    container_layout.addWidget(param_widget)
                 else:
-                    param_layout.addLayout(pw_lo, ii, widget_idx)
+                    container_layout.addLayout(pw_lo)
+                param_layout.addWidget(container_widget, ii, widget_idx)
+                self.param_widget_map[param_key] = param_widget
+                self.param_container_map[param_key] = container_widget
             else:
                 v = params[param_key]
                 raise ValueError(f"Failed to initialize widget for key-value pair: {param_key}-{v}")
-            
+
     def on_flushbtn_clicked(self):
         paramw: ParamComboBox = self.sender()
         content_dict = {'content': '', 'widget': paramw, 'flush': True}
@@ -260,8 +275,47 @@ class ParamWidget(QWidget):
         self.paramwidget_edited.emit(paramw.param_key, content_dict)
 
     def on_paramwidget_edited(self, param_key, param_content):
-        content_dict = {'content': param_content}
+        content_dict = {'content': param_content, 'widget': self.sender()}
         self.paramwidget_edited.emit(param_key, content_dict)
+
+    def set_param_visibility(self, param_key: str, visible: bool):
+        container = self.param_container_map.get(param_key)
+        if container is not None:
+            container.setVisible(visible)
+        label = self.param_label_map.get(param_key)
+        if label is not None:
+            label.setVisible(visible)
+
+    def set_param_enabled(self, param_key: str, enabled: bool):
+        widget = self.param_widget_map.get(param_key)
+        if widget is not None:
+            widget.setEnabled(enabled)
+        label = self.param_label_map.get(param_key)
+        if label is not None:
+            label.setEnabled(enabled)
+
+    def get_param_widget(self, param_key: str):
+        return self.param_widget_map.get(param_key)
+
+    def ensure_helper_label(self, param_key: str, text: str) -> QLabel:
+        label = self.param_helper_label_map.get(param_key)
+        if label is None:
+            container = self.param_container_map.get(param_key)
+            if container is None:
+                return None
+            label = QLabel(text)
+            label.setWordWrap(True)
+            label.setVisible(False)
+            container_layout = container.layout()
+            if container_layout is not None:
+                container_layout.addWidget(label)
+            self.param_helper_label_map[param_key] = label
+        else:
+            label.setText(text)
+        return label
+
+    def get_helper_label(self, param_key: str) -> QLabel:
+        return self.param_helper_label_map.get(param_key)
 
 class ModuleParseWidgets(QWidget):
     def addModulesParamWidgets(self, ocr_instance):
@@ -370,6 +424,7 @@ class TranslatorConfigPanel(ModuleConfigParseWidget):
     show_pre_MT_keyword_window = Signal()
     show_MT_keyword_window = Signal()
     show_OCR_keyword_window = Signal()
+    prev_summary_changed = Signal(str)
 
     def __init__(self, module_name, scrollWidget: QWidget = None, *args, **kwargs) -> None:
         super().__init__(module_name, GET_VALID_TRANSLATORS, scrollWidget=scrollWidget, *args, **kwargs)
@@ -399,6 +454,27 @@ class TranslatorConfigPanel(ModuleConfigParseWidget):
         self.vlayout.addWidget(self.replaceOCRkeywordBtn)
         self.vlayout.addWidget(self.replacePreMTkeywordBtn)
         self.vlayout.addWidget(self.replaceMTkeywordBtn)
+
+        summary_label = ParamNameLabel(self.tr('Summary & Extras'))
+        summary_label.setToolTip(
+            self.tr('Provide context or notes to guide translations.'))
+        self.prev_summary_editor = QPlainTextEdit(self)
+        self.prev_summary_editor.setObjectName('prev_summary_editor')
+        self.prev_summary_editor.setFixedWidth(CONFIG_COMBOBOX_LONG)
+        self.prev_summary_editor.setFixedHeight(120)
+        self.prev_summary_editor.setPlaceholderText(
+            self.tr('Add summaries, cast notes, or other context to improve translation consistency.'))
+        self.prev_summary_editor.textChanged.connect(self._on_prev_summary_changed)
+        self.vlayout.addWidget(summary_label)
+        self.vlayout.addWidget(self.prev_summary_editor)
+
+    def set_prev_summary_text(self, summary: str):
+        self.prev_summary_editor.blockSignals(True)
+        self.prev_summary_editor.setPlainText(summary or '')
+        self.prev_summary_editor.blockSignals(False)
+
+    def _on_prev_summary_changed(self):
+        self.prev_summary_changed.emit(self.prev_summary_editor.toPlainText())
 
     def finishSetTranslator(self, translator: BaseTranslator):
         self.source_combobox.blockSignals(True)

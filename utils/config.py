@@ -112,6 +112,11 @@ class ProgramConfig(Config):
     let_writing_mode_flag: int = 0
     let_family_flag: int = 0
     let_autolayout_flag: bool = True
+    smart_bubble_split: bool = True
+    auto_format_fit: bool = True
+    fit_tolerance: float = 0.9
+    min_font_size: int = 12
+    max_font_size: int = 28
     let_uppercase_flag: bool = True
     let_show_only_custom_fonts_flag: bool = False
     let_textstyle_indep_flag: bool = False
@@ -131,6 +136,7 @@ class ProgramConfig(Config):
     show_trans_text: bool = True
     saladict_shortcut: str = "Alt+S"
     search_url: str = "https://www.google.com/search?q="
+    prev_summary: str = ''
     ocr_sublist: List = field(default_factory=lambda: list())
     restore_ocr_empty: bool = False
     pre_mt_sublist: List = field(default_factory=lambda: list())

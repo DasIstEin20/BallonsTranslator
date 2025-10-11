@@ -228,14 +228,22 @@ def main():
         shared.SCREEN_H = ps.geometry().height()
 
     lang = config.display_lang
-    langp = osp.join(shared.TRANSLATE_DIR, lang + '.qm')
-    if osp.exists(langp):
+    translator_dir = osp.dirname(osp.abspath(__file__)) + "/translate"
+    lang_qm_path = osp.join(shared.TRANSLATE_DIR, lang + '.qm')
+
+    translator_loaded = False
+    if osp.exists(lang_qm_path):
         translator = QTranslator()
-        translator.load(lang, osp.dirname(osp.abspath(__file__)) + "/translate")
+        translator.load(lang, translator_dir)
         app.installTranslator(translator)
+        translator_loaded = True
     elif lang not in ('en_US', 'English'):
-        LOGGER.warning(f'target display language file {langp} doesnt exist.')
-    LOGGER.info(f'set display language to {lang}')
+        LOGGER.warning(f'target display language file {lang_qm_path} doesnt exist.')
+
+    if translator_loaded:
+        LOGGER.info(f'set display language to {lang}')
+    else:
+        LOGGER.info(f'set display language to {lang} (default resources)')
 
     # Fonts
     # Load custom fonts if they exist
